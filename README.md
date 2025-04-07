@@ -1,20 +1,3 @@
-# template
-
-A new Flutter project.
-
-## Getting Started
-
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-
 # Developer
 
 ## Overview
@@ -29,7 +12,7 @@ To enable the functionality of prayer times and Qibla, you need to connect the a
 * Firebase SDK: Incorporate Firebase SDK into your application for authentication and database features.
 * Firestore: Use Firestore for storing and retrieving prayer times and other relevant data.
 ## Setting Up Firebase
-* - [Create a Firebase Project:] (https://console.firebase.google.com/)
+- [Create a Firebase Project:](https://console.firebase.google.com/)
 Go to the Firebase Console.
 Click on "Add Project" and follow the setup instructions.
 * Add App to Firebase:
