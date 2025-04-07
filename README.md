@@ -29,7 +29,7 @@ To enable the functionality of prayer times and Qibla, you need to connect the a
 * Firebase SDK: Incorporate Firebase SDK into your application for authentication and database features.
 * Firestore: Use Firestore for storing and retrieving prayer times and other relevant data.
 ## Setting Up Firebase
-* Create a Firebase Project: (https://console.firebase.google.com/)
+* [Create a Firebase Project:] (https://console.firebase.google.com/)
 Go to the Firebase Console.
 Click on "Add Project" and follow the setup instructions.
 * Add App to Firebase:
