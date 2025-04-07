@@ -15,21 +15,21 @@ For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
 
-## Developer
+# Developer
 
-# Overview
+## Overview
 This repository contains a fully functional application that provides features such as prayer times and Qibla direction. However, please note that certain operations require an internet connection to function properly.
-# Features
+## Features
 Prayer Times: Access prayer times based on the user's location.
 Qibla Direction: Find the direction of the Qibla from your current location.
 Prerequisites
 To enable the functionality of prayer times and Qibla, you need to connect the application to Firebase. Below are some tools and steps to help you set this up.
-# Tools for Firebase Integration
+## Tools for Firebase Integration
 * Firebase Console: Create a Firebase project and configure your app.
 * Firebase SDK: Incorporate Firebase SDK into your application for authentication and database features.
 * Firestore: Use Firestore for storing and retrieving prayer times and other relevant data.
-# Setting Up Firebase
-* Create a Firebase Project:
+## Setting Up Firebase
+* Create a Firebase Project: (https://console.firebase.google.com/)
 Go to the Firebase Console.
 Click on "Add Project" and follow the setup instructions.
 * Add App to Firebase:
