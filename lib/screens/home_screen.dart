@@ -3,7 +3,6 @@ import 'dart:async';
 import 'second_screen.dart';
 import 'third_screen.dart';
 import 'empty_screen_one.dart';
-import 'archive_screen.dart';
 import 'islamic_info_screen.dart';
 import '../database/database_helper.dart';
 import '../models/daily_task.dart';
@@ -11,9 +10,22 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'database_admin_screen.dart';
 import 'thoughts_journal_screen.dart';
 import 'quran_screen.dart';
+import 'options_screen.dart';
+import '../widgets/custom_bottom_navigation.dart';
+import '../widgets/next_prayer_widget.dart';
+import '../theme/app_colors.dart';
+import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'package:shimmer/shimmer.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final Function toggleTheme;
+  final bool isDarkMode;
+
+  const HomeScreen({
+    super.key,
+    required this.toggleTheme,
+    required this.isDarkMode,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -46,20 +58,16 @@ class CityData {
   }
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   final Map<String, bool> _options = {};
   List<DailyTask> _dailyTasks = [];
   Timer? _timer;
   bool _isLoading = true;
-  //Map<String, DateTime>? _prayerTimes;
   final TextEditingController _latitudeController = TextEditingController();
   final TextEditingController _longitudeController = TextEditingController();
   final TextEditingController _cityNameController = TextEditingController();
-  // متغيرات المدن والمواقع
-  //List<CityData> _availableCities = [];
-  //CityData? _selectedCity;
 
-  // إضافة متغيرات أوقات الصلاة
+  // متغيرات أوقات الصلاة
   Map<String, dynamic>? _defaultLocation;
   Map<String, dynamic>? _prayerTimesData;
   bool _isLoadingPrayerTimes = false;
@@ -68,12 +76,32 @@ class _HomeScreenState extends State<HomeScreen> {
   // إضافة متغير للرسالة اليومية
   Map<String, dynamic>? _latestDailyMessage;
   bool _isLoadingDailyMessage = false;
+  
+  // متغيرات شريط التنقل السفلي
+  int _currentNavIndex = 0;
+  
+  // متغيرات للتأثيرات المتحركة
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
 
-  // تعريف المتغيرات عند التهيئة
   @override
   void initState() {
     super.initState();
     initializeDateFormatting('ar', null); // تهيئة تنسيق التواريخ العربية
+    
+    // تهيئة التأثيرات المتحركة
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: Curves.easeIn,
+      ),
+    );
+    _animationController.forward();
+    
     _initializeIslamicDatabase();
     _loadData();
     _loadPrayerTimes(); // تحميل أوقات الصلاة
@@ -101,18 +129,11 @@ class _HomeScreenState extends State<HomeScreen> {
       print('استعلام عن المدن المتوفرة...');
       final locations = await DatabaseHelper.instance.getLocations();
       print('المدن المتوفرة: ${locations.length}');
-      for (var loc in locations) {
-        print('- مدينة: ${loc['name']} - المعرف: ${loc['id']}');
-      }
 
       // إصلاح وتهيئة جدول القبلة
       print('بدء إصلاح وتهيئة جدول القبلة...');
       await DatabaseHelper.instance.repairQiblaTable();
       print('تم إصلاح وتهيئة جدول القبلة بنجاح');
-
-      // عرض جميع سجلات القبلة للتأكد
-      print('استعلام عن جميع سجلات القبلة للتحقق...');
-      await DatabaseHelper.instance.getAllQiblaDirections();
 
       // تهيئة جدول أوقات الصلاة
       await DatabaseHelper.instance.initializePrayerTimesTable();
@@ -150,8 +171,6 @@ class _HomeScreenState extends State<HomeScreen> {
         if (qibla != null) {
           print('تم العثور على اتجاه القبلة للموقع الافتراضي: $qibla');
           _qiblaDirection = qibla;
-        } else {
-          print('لم يتم العثور على اتجاه القبلة للموقع الافتراضي');
         }
 
         // 3. الحصول على أوقات الصلاة لهذا الموقع
@@ -238,7 +257,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // تحميل دالة تحميل البيانات بإضافة استدعاء تحميل آخر رسالة يومية
+  // تحميل البيانات
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -280,173 +299,600 @@ class _HomeScreenState extends State<HomeScreen> {
     _latitudeController.dispose();
     _longitudeController.dispose();
     _cityNameController.dispose();
+    _animationController.dispose();
     super.dispose();
   }
 
-  // إلى اسم عربي
-  String _arabicPrayerName(String englishName) {
-    final Map<String, String> prayerNames = {
-      'fajr': 'الفجر',
-      'sunrise': 'الشروق',
-      'dhuhr': 'الظهر',
-      'asr': 'العصر',
-      'maghrib': 'المغرب',
-      'isha': 'العشاء',
-      'none': 'لا يوجد',
-    };
-
-    return prayerNames[englishName.toLowerCase()] ?? englishName;
+  // التنقل بين شاشات التطبيق عبر شريط التنقل السفلي
+  void _onNavItemTapped(int index) {
+    if (index == _currentNavIndex) return;
+    
+    switch (index) {
+      case 0: // الرئيسية - نحن بالفعل هنا
+        setState(() {
+          _currentNavIndex = index;
+        });
+        break;
+      case 1: // العبادات
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const SecondScreen()),
+        ).then((_) => _loadData());
+        break;
+      case 2: // المهام
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const ThirdScreen()),
+        ).then((_) => _loadData());
+        break;
+      case 3: // القرآن
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const QuranScreen()),
+        ).then((_) => _loadData());
+        break;
+      case 4: // الإعدادات
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const OptionsScreen()),
+        ).then((_) => _loadData());
+        break;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('تطبيق المسلم - الصفحة الرئيسية'),
-        actions: [
-          _buildOptionsButton(),
+      backgroundColor: widget.isDarkMode 
+          ? AppColors.darkBackgroundColor 
+          : AppColors.backgroundColor,
+      appBar: _buildAppBar(),
+      body: _buildBody(),
+      bottomNavigationBar: CustomBottomNavigation(
+        currentIndex: _currentNavIndex,
+        onTap: _onNavItemTapped,
+        isDarkMode: widget.isDarkMode,
+      ),
+    );
+  }
+
+  AppBar _buildAppBar() {
+    return AppBar(
+      elevation: 0,
+      backgroundColor: widget.isDarkMode 
+          ? AppColors.darkSurfaceColor
+          : AppColors.primaryColor,
+      centerTitle: true,
+      title: const Text(
+        'المهندس المسلم',
+        style: TextStyle(
+          fontFamily: 'Tajawal',
+          fontWeight: FontWeight.bold,
+          fontSize: 22,
+          letterSpacing: 0.5,
+        ),
+      ),
+      actions: [
+        IconButton(
+          icon: Icon(
+            widget.isDarkMode ? Icons.light_mode : Icons.dark_mode,
+            color: Colors.white,
+          ),
+          onPressed: () => widget.toggleTheme(),
+          tooltip: widget.isDarkMode ? 'الوضع الفاتح' : 'الوضع الداكن',
+        ),
+        IconButton(
+          icon: const Icon(Icons.refresh, color: Colors.white),
+          onPressed: _refreshApp,
+          tooltip: 'تحديث',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBody() {
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      color: AppColors.primaryColor,
+      backgroundColor: widget.isDarkMode ? AppColors.darkSurfaceColor : Colors.white,
+      child: _isLoading ? _buildLoadingScreen() : _buildMainContent(),
+    );
+  }
+
+  Widget _buildLoadingScreen() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Image.asset(
+            'assets/images/loading.png',
+            width: 100,
+            height: 100,
+          ),
+          const SizedBox(height: 24),
+          Shimmer.fromColors(
+            baseColor: widget.isDarkMode
+                ? Colors.grey[700]!
+                : Colors.grey[300]!,
+            highlightColor: widget.isDarkMode
+                ? Colors.grey[600]!
+                : Colors.grey[100]!,
+            child: Container(
+              width: 200,
+              height: 20,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: Colors.white,
+              ),
+            ),
+          ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _loadData,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 16),
-                _buildPrayerTimesCard(),
-                const SizedBox(height: 16),
-                _buildDailyMessageCard(),
-                const SizedBox(height: 16),
-                _buildWorshipSummaryCard(),
-                const SizedBox(height: 16),
-                _buildDailyTasksSummaryCard(),
-                const SizedBox(height: 20),
-                _buildMenuCard(
-                  context,
-                  icon: Icons.mosque_outlined,
-                  title: 'متابعة العبادات',
-                  subtitle: 'تسجيل ومتابعة الصلوات والعبادات اليومية',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const SecondScreen()),
-                    ).then(
-                        (_) => _loadData()); // إعادة تحميل البيانات بعد العودة
-                  },
-                ),
-                const SizedBox(height: 20),
-                _buildMenuCard(
-                  context,
-                  icon: Icons.star_outline,
-                  title: 'المهام اليومية',
-                  subtitle: 'تسجيل وتتبع مهامك اليومية والمستقبلية',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const ThirdScreen()),
-                    ).then(
-                        (_) => _loadData()); // إعادة تحميل البيانات بعد العودة
-                  },
-                ),
-                const SizedBox(height: 20),
-                _buildMenuCard(
-                  context,
-                  icon: Icons.pages_outlined,
-                  title: 'أفكاري ومشاريعي',
-                  subtitle: 'تسجيل وإدارة الأفكار والمشاريع الشخصية',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const EmptyScreenOne()),
-                    ).then(
-                        (_) => _loadData()); // إعادة تحميل البيانات بعد العودة
-                  },
-                ),
-                const SizedBox(height: 20),
-                _buildMenuCard(
-                  context,
-                  icon: Icons.book_outlined,
-                  title: 'سجل الخواطر',
-                  subtitle: 'تدوين وحفظ الخواطر والأفكار اليومية',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const ThoughtsJournalScreen()),
-                    ).then(
-                        (_) => _loadData()); // إعادة تحميل البيانات بعد العودة
-                  },
-                ),
-                const SizedBox(height: 20),
-                _buildMenuCard(
-                  context,
-                  icon: Icons.menu_book,
-                  title: 'القرآن الكريم',
-                  subtitle: 'قراءة وتلاوة القرآن الكريم',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const QuranScreen()),
-                    );
-                  },
-                ),
-                const SizedBox(height: 20),
-                _buildMenuCard(
-                  context,
-                  icon: Icons.archive_outlined,
-                  title: 'الأرشيف',
-                  subtitle: 'عرض وإدارة العناصر المؤرشفة من البيانات السابقة',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const ArchiveScreen()),
-                    ).then(
-                        (_) => _loadData()); // إعادة تحميل البيانات بعد العودة
-                  },
-                ),
-                const SizedBox(height: 20),
-                _buildMenuCard(
-                  context,
-                  icon: Icons.info_outline,
-                  title: 'المعلومات الإسلامية',
-                  subtitle: 'الأذكار والأدعية والقبلة وأوقات الصلاة',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const IslamicInfoScreen()),
-                    ).then(
-                        (_) => _loadData()); // إعادة تحميل البيانات بعد العودة
-                  },
-                ),
-              ],
+    );
+  }
+
+  Widget _buildMainContent() {
+    return AnimationLimiter(
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: AnimationConfiguration.toStaggeredList(
+            duration: const Duration(milliseconds: 400),
+            childAnimationBuilder: (widget) => SlideAnimation(
+              horizontalOffset: 50.0,
+              child: FadeInAnimation(child: widget),
             ),
+            children: [
+              // ويدجت الصلاة التالية مع عداد تنازلي
+              if (!_isLoadingPrayerTimes && _prayerTimesData != null)
+                NextPrayerWidget(
+                  prayerTimesData: _prayerTimesData!,
+                  isDarkMode: widget.isDarkMode,
+                ),
+              
+              const SizedBox(height: 20),
+              
+              // بطاقة الرسالة اليومية
+              _buildDailyMessageCard(),
+              
+              const SizedBox(height: 20),
+              
+              // الشعارات السريعة
+              _buildQuickActions(),
+              
+              const SizedBox(height: 16),
+              
+              // عنوان القسم - ملخص المهام
+              _buildSectionTitle('ملخص المهام'),
+              
+              const SizedBox(height: 12),
+              
+              // بطاقة ملخص المهام
+              _buildDailyTasksSummaryCard(),
+              
+              const SizedBox(height: 20),
+              
+              // عنوان القسم - ملخص العبادات
+              _buildSectionTitle('ملخص العبادات'),
+              
+              const SizedBox(height: 12),
+              
+              // بطاقة ملخص العبادات
+              _buildWorshipSummaryCard(),
+              
+              const SizedBox(height: 20),
+
+              // عنوان القسم - التنقل السريع
+              _buildSectionTitle('التنقل السريع'),
+              
+              const SizedBox(height: 12),
+              
+              // بطاقات التنقل السريع
+              _buildQuickNavigationCards(),
+              
+              const SizedBox(height: 20),
+            ],
           ),
         ),
       ),
     );
   }
 
-  // بطاقة ملخص الأهداف اليومية
-  Widget _buildDailyTasksSummaryCard() {
-    if (_isLoading) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Center(child: CircularProgressIndicator()),
-        ),
-      );
-    }
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 20,
+            decoration: BoxDecoration(
+              color: AppColors.primaryColor,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: widget.isDarkMode 
+                  ? Colors.white 
+                  : AppColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
+  Widget _buildQuickActions() {
+    return SizedBox(
+      height: 100,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        children: [
+          _buildQuickActionItem(
+            icon: Icons.mosque_outlined,
+            title: 'العبادات',
+            color: AppColors.mosqueGreen,
+            onTap: () {
+              _onNavItemTapped(1);
+            },
+          ),
+          _buildQuickActionItem(
+            icon: Icons.task_alt_outlined,
+            title: 'المهام',
+            color: AppColors.prayerBlue,
+            onTap: () {
+              _onNavItemTapped(2);
+            },
+          ),
+          _buildQuickActionItem(
+            icon: Icons.menu_book_outlined,
+            title: 'القرآن',
+            color: AppColors.quranGold,
+            onTap: () {
+              _onNavItemTapped(3);
+            },
+          ),
+          _buildQuickActionItem(
+            icon: Icons.comment_outlined,
+            title: 'الأذكار',
+            color: AppColors.accentColor,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const IslamicInfoScreen()),
+              );
+            },
+          ),
+          _buildQuickActionItem(
+            icon: Icons.book_outlined,
+            title: 'الخواطر',
+            color: AppColors.bothTasksColor,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ThoughtsJournalScreen()),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActionItem({
+    required IconData icon,
+    required String title,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: color.withOpacity(widget.isDarkMode ? 0.2 : 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                color: color,
+                size: 28,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              style: TextStyle(
+                color: widget.isDarkMode ? Colors.white : AppColors.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickNavigationCards() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _buildNavCard(
+                icon: Icons.menu_book,
+                title: 'القرآن الكريم',
+                description: 'قراءة وتلاوة القرآن',
+                color: AppColors.quranGold,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const QuranScreen()),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildNavCard(
+                icon: Icons.info_outline,
+                title: 'معلومات إسلامية',
+                description: 'أذكار وأدعية وقبلة',
+                color: AppColors.mosqueGreen,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const IslamicInfoScreen()),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildNavCard(
+                icon: Icons.book_outlined,
+                title: 'سجل الخواطر',
+                description: 'تدوين وحفظ الخواطر',
+                color: AppColors.bothTasksColor,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ThoughtsJournalScreen()),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildNavCard(
+                icon: Icons.archive_outlined,
+                title: 'الأرشيف',
+                description: 'عرض وإدارة الأرشيف',
+                color: AppColors.secondaryColor,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const EmptyScreenOne()),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNavCard({
+    required IconData icon,
+    required String title,
+    required String description,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      color: widget.isDarkMode ? AppColors.darkSurfaceColor : Colors.white,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                icon,
+                color: color,
+                size: 28,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: widget.isDarkMode ? Colors.white : AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: widget.isDarkMode ? Colors.grey[400] : AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // بطاقة الرسالة اليومية
+  Widget _buildDailyMessageCard() {
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      color: widget.isDarkMode 
+          ? AppColors.darkSurfaceColor 
+          : Colors.blue.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.format_quote,
+                      color: widget.isDarkMode 
+                          ? AppColors.darkPrimaryColor 
+                          : AppColors.primaryColor,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'رسالة اليوم',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: widget.isDarkMode 
+                            ? Colors.white 
+                            : AppColors.primaryColor,
+                      ),
+                    ),
+                  ],
+                ),
+                IconButton(
+                  icon: Icon(
+                    Icons.refresh,
+                    color: widget.isDarkMode 
+                        ? AppColors.darkPrimaryColor 
+                        : AppColors.primaryColor,
+                  ),
+                  onPressed: _loadLatestDailyMessage,
+                  tooltip: 'تحديث',
+                ),
+              ],
+            ),
+            const Divider(),
+            if (_isLoadingDailyMessage)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: CircularProgressIndicator(
+                    color: widget.isDarkMode 
+                        ? AppColors.darkPrimaryColor 
+                        : AppColors.primaryColor,
+                  ),
+                ),
+              )
+            else if (_latestDailyMessage == null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Text(
+                    'لم يتم العثور على رسائل يومية',
+                    style: TextStyle(
+                      color: widget.isDarkMode 
+                          ? Colors.grey[400] 
+                          : Colors.grey[700],
+                    ),
+                  ),
+                ),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _latestDailyMessage!['title'],
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: widget.isDarkMode 
+                          ? Colors.white 
+                          : AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _latestDailyMessage!['content'],
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: widget.isDarkMode 
+                          ? Colors.grey[300] 
+                          : AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: widget.isDarkMode 
+                              ? AppColors.darkPrimaryColor.withOpacity(0.3) 
+                              : Colors.blue.shade100,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          _latestDailyMessage!['category'],
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: widget.isDarkMode 
+                                ? AppColors.darkPrimaryColor 
+                                : AppColors.primaryColor,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        'المصدر: ${_latestDailyMessage!['source']}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic,
+                          color: widget.isDarkMode 
+                              ? Colors.grey[400] 
+                              : AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // بطاقة ملخص المهام
+  Widget _buildDailyTasksSummaryCard() {
     // حساب إحصائيات المهام اليومية
     int totalWorldly = 0;
     int completedWorldly = 0;
@@ -495,8 +941,13 @@ class _HomeScreenState extends State<HomeScreen> {
         incompleteTasks > 0 ? (inProgressTasks / incompleteTasks) * 100 : 0;
 
     return Card(
-      color: Colors.amber.shade50,
       elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      color: widget.isDarkMode 
+          ? AppColors.darkSurfaceColor 
+          : Colors.amber.shade50,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -505,15 +956,23 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
+                Text(
                   'ملخص الأهداف اليومية',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
+                    color: widget.isDarkMode 
+                        ? Colors.white 
+                        : AppColors.textPrimary,
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.refresh, color: Colors.amber),
+                  icon: Icon(
+                    Icons.refresh,
+                    color: widget.isDarkMode 
+                        ? Colors.amber[300] 
+                        : Colors.amber,
+                  ),
                   onPressed: _loadData,
                   tooltip: 'تحديث',
                 ),
@@ -523,18 +982,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
             // نسبة الإنجاز الكلية
             Container(
-              padding: const EdgeInsets.all(8.0),
+              padding: const EdgeInsets.all(12.0),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.amber),
+                color: widget.isDarkMode 
+                    ? Colors.grey[850] 
+                    : Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: widget.isDarkMode 
+                        ? Colors.black.withOpacity(0.3) 
+                        : Colors.grey.withOpacity(0.2),
+                    blurRadius: 5,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: Column(
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('نسبة إنجاز الأهداف:'),
+                      Text(
+                        'نسبة إنجاز الأهداف:',
+                        style: TextStyle(
+                          color: widget.isDarkMode 
+                              ? Colors.white 
+                              : AppColors.textPrimary,
+                        ),
+                      ),
                       Text(
                         '${completionPercentage.toStringAsFixed(1)}%',
                         style: const TextStyle(
@@ -544,18 +1020,32 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  LinearProgressIndicator(
-                    value: completionPercentage / 100,
-                    backgroundColor: Colors.grey.shade200,
-                    valueColor:
-                        const AlwaysStoppedAnimation<Color>(Colors.green),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: completionPercentage / 100,
+                      backgroundColor: widget.isDarkMode 
+                          ? Colors.grey[700] 
+                          : Colors.grey[200],
+                      valueColor:
+                          const AlwaysStoppedAnimation<Color>(Colors.green),
+                      minHeight: 8,
+                    ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('نسبة العمل على الأهداف المتبقية:'),
+                      Text(
+                        'نسبة العمل على الأهداف المتبقية:',
+                        style: TextStyle(
+                          color: widget.isDarkMode 
+                              ? Colors.white 
+                              : AppColors.textPrimary,
+                          fontSize: 12,
+                        ),
+                      ),
                       Text(
                         '${progressPercentage.toStringAsFixed(1)}%',
                         style: const TextStyle(
@@ -565,18 +1055,24 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  LinearProgressIndicator(
-                    value: progressPercentage / 100,
-                    backgroundColor: Colors.grey.shade200,
-                    valueColor:
-                        const AlwaysStoppedAnimation<Color>(Colors.orange),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: progressPercentage / 100,
+                      backgroundColor: widget.isDarkMode 
+                          ? Colors.grey[700] 
+                          : Colors.grey[200],
+                      valueColor:
+                          const AlwaysStoppedAnimation<Color>(Colors.orange),
+                      minHeight: 8,
+                    ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
 
             // ملخص حسب نوع الهدف
             Row(
@@ -586,7 +1082,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     'أهداف دنيوية',
                     completedWorldly,
                     totalWorldly,
-                    Colors.blue,
+                    AppColors.worldlyTaskColor,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -595,7 +1091,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     'أهداف أخروية',
                     completedReligious,
                     totalReligious,
-                    Colors.green,
+                    AppColors.religiousTaskColor,
                   ),
                 ),
               ],
@@ -608,7 +1104,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     'أهداف مشتركة',
                     completedBoth,
                     totalBoth,
-                    Colors.purple,
+                    AppColors.bothTasksColor,
                   ),
                 ),
                 const Expanded(
@@ -620,13 +1116,16 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 12),
 
             // إحصائيات إضافية
-            Text(
-              'عدد الأهداف: $totalTasks، مكتمل: $completedTasks، قيد الإنجاز: $inProgressTasks',
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.grey,
+            Center(
+              child: Text(
+                'عدد الأهداف: $totalTasks، مكتمل: $completedTasks، قيد الإنجاز: $inProgressTasks',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: widget.isDarkMode 
+                      ? Colors.grey[400] 
+                      : AppColors.textSecondary,
+                ),
               ),
-              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -638,11 +1137,21 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildGoalTypeItem(
       String title, int completed, int total, Color color) {
     return Container(
-      padding: const EdgeInsets.all(8.0),
+      padding: const EdgeInsets.all(12.0),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        color: Colors.white,
-        border: Border.all(color: color.withOpacity(0.5)),
+        borderRadius: BorderRadius.circular(12),
+        color: widget.isDarkMode 
+            ? Colors.grey[850] 
+            : Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: widget.isDarkMode 
+                ? Colors.black.withOpacity(0.3) 
+                : Colors.grey.withOpacity(0.2),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -654,13 +1163,19 @@ class _HomeScreenState extends State<HomeScreen> {
               fontSize: 12,
             ),
           ),
-          const SizedBox(height: 4),
-          LinearProgressIndicator(
-            value: total > 0 ? completed / total : 0,
-            backgroundColor: Colors.grey.shade200,
-            valueColor: AlwaysStoppedAnimation<Color>(color),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: total > 0 ? completed / total : 0,
+              backgroundColor: widget.isDarkMode 
+                  ? Colors.grey[700] 
+                  : Colors.grey[200],
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+              minHeight: 8,
+            ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Text(
             '$completed/$total',
             style: TextStyle(
@@ -676,15 +1191,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // بطاقة ملخص العبادات
   Widget _buildWorshipSummaryCard() {
-    if (_isLoading) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Center(child: CircularProgressIndicator()),
-        ),
-      );
-    }
-
     // الفرائض (الصلوات الخمس)
     int totalFard = 5;
     int completedFard = 0;
@@ -770,8 +1276,13 @@ class _HomeScreenState extends State<HomeScreen> {
         100;
 
     return Card(
-      color: Colors.green.shade50,
       elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      color: widget.isDarkMode 
+          ? AppColors.darkSurfaceColor 
+          : Colors.green.shade50,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -780,15 +1291,23 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
+                Text(
                   'ملخص العبادات اليومية',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
+                    color: widget.isDarkMode 
+                        ? Colors.white 
+                        : AppColors.textPrimary,
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.refresh, color: Colors.green),
+                  icon: Icon(
+                    Icons.refresh, 
+                    color: widget.isDarkMode 
+                        ? Colors.green[300] 
+                        : Colors.green,
+                  ),
                   onPressed: _loadData,
                   tooltip: 'تحديث',
                 ),
@@ -813,7 +1332,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     'السنن',
                     completedSunnah,
                     totalSunnah,
-                    Colors.blue,
+                    AppColors.prayerBlue,
                   ),
                 ),
               ],
@@ -828,7 +1347,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     'الورد القرآني',
                     completedQuran,
                     totalQuran,
-                    Colors.teal,
+                    AppColors.quranGold,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -837,7 +1356,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     'قيام الليل',
                     completedNightPrayers,
                     totalNightPrayers,
-                    Colors.purple,
+                    AppColors.bothTasksColor,
                   ),
                 ),
               ],
@@ -852,17 +1371,27 @@ class _HomeScreenState extends State<HomeScreen> {
                     'الأذكار',
                     completedAthkar,
                     totalAthkar,
-                    Colors.green,
+                    AppColors.mosqueGreen,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Container(
-                    padding: const EdgeInsets.all(8.0),
+                    padding: const EdgeInsets.all(12.0),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      color: Colors.white,
-                      border: Border.all(color: Colors.green),
+                      borderRadius: BorderRadius.circular(12),
+                      color: widget.isDarkMode 
+                          ? Colors.grey[850] 
+                          : Colors.white,
+                      boxShadow: [
+                        BoxShadow(
+                          color: widget.isDarkMode 
+                              ? Colors.black.withOpacity(0.3) 
+                              : Colors.grey.withOpacity(0.2),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
                     ),
                     child: Column(
                       children: [
@@ -872,19 +1401,25 @@ class _HomeScreenState extends State<HomeScreen> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        LinearProgressIndicator(
-                          value: totalProgress / 100,
-                          backgroundColor: Colors.grey.shade200,
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(Colors.green),
+                        const SizedBox(height: 6),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: LinearProgressIndicator(
+                            value: totalProgress / 100,
+                            backgroundColor: widget.isDarkMode 
+                                ? Colors.grey[700] 
+                                : Colors.grey[200],
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                AppColors.mosqueGreen),
+                            minHeight: 8,
+                          ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 6),
                         Text(
                           '${totalProgress.toStringAsFixed(1)}%',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            color: Colors.green,
+                            color: AppColors.mosqueGreen,
                           ),
                         ),
                       ],
@@ -900,14 +1435,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // خلية ملخص لكل نوع عبادة
-  Widget _buildSummaryItem(
-      String title, int completed, int total, Color color) {
+  Widget _buildSummaryItem(String title, int completed, int total, Color color) {
     return Container(
-      padding: const EdgeInsets.all(8.0),
+      padding: const EdgeInsets.all(12.0),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        color: Colors.white,
-        border: Border.all(color: color.withOpacity(0.5)),
+        borderRadius: BorderRadius.circular(12),
+        color: widget.isDarkMode 
+            ? Colors.grey[850] 
+            : Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: widget.isDarkMode 
+                ? Colors.black.withOpacity(0.3) 
+                : Colors.grey.withOpacity(0.2),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -918,13 +1462,19 @@ class _HomeScreenState extends State<HomeScreen> {
               color: color,
             ),
           ),
-          const SizedBox(height: 4),
-          LinearProgressIndicator(
-            value: total > 0 ? completed / total : 0,
-            backgroundColor: Colors.grey.shade200,
-            valueColor: AlwaysStoppedAnimation<Color>(color),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: total > 0 ? completed / total : 0,
+              backgroundColor: widget.isDarkMode 
+                  ? Colors.grey[700] 
+                  : Colors.grey[200],
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+              minHeight: 8,
+            ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Text(
             '$completed/$total',
             style: TextStyle(
@@ -937,348 +1487,29 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildMenuCard(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 10),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 48,
-                color: Theme.of(context).primaryColor,
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.arrow_forward_ios),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   // الدالة التي تعرض عند الضغط على زر إعادة تحميل
   void _refreshApp() async {
-    // عرض نص "جاري التحميل"
-    setState(() {
-      _isLoading = true;
-    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('جاري تحديث البيانات...'),
+        backgroundColor: widget.isDarkMode 
+            ? AppColors.darkPrimaryColor 
+            : AppColors.primaryColor,
+      ),
+    );
 
     // إعادة تحميل البيانات
     await _loadData();
 
-    // تحميل أوقات الصلاة
-    await _loadPrayerTimes();
-
-    // إخفاء نص "جاري التحميل"
-    setState(() {
-      _isLoading = false;
-    });
-
     // عرض رسالة تأكيد
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('تم تحديث البيانات بنجاح')),
-    );
-  }
-
-  // زر الخيارات في شريط التطبيق - محاذاة يسار
-  Widget _buildOptionsButton() {
-    return PopupMenuButton<String>(
-      icon: const Icon(Icons.more_vert),
-      onSelected: (value) {
-        if (value == 'manage_database') {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const DatabaseAdminScreen(),
-            ),
-          );
-        }
-      },
-      itemBuilder: (context) => [
-        const PopupMenuItem<String>(
-          value: 'manage_database',
-          child: Row(
-            children: [
-              Icon(Icons.storage, color: Colors.purple),
-              SizedBox(width: 8),
-              Text('إدارة قاعدة البيانات'),
-            ],
-          ),
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('تم تحديث البيانات بنجاح'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
         ),
-      ],
-    );
-  }
-
-  // بناء كارت أوقات الصلاة
-  Widget _buildPrayerTimesCard() {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'أوقات الصلاة',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (_defaultLocation != null)
-                  Text(
-                    '${_defaultLocation!['name']}',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green,
-                    ),
-                  ),
-              ],
-            ),
-            const Divider(),
-            if (_isLoadingPrayerTimes)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: CircularProgressIndicator(),
-                ),
-              )
-            else if (_prayerTimesData == null)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text(
-                    'لم يتم العثور على أوقات الصلاة',
-                    style: TextStyle(color: Colors.red),
-                  ),
-                ),
-              )
-            else
-              Column(
-                children: [
-                  _buildPrayerTimeRow(
-                      'fajr', 'الفجر', _prayerTimesData!['fajr']),
-                  _buildPrayerTimeRow(
-                      'sunrise', 'الشروق', _prayerTimesData!['sunrise']),
-                  _buildPrayerTimeRow(
-                      'dhuhr', 'الظهر', _prayerTimesData!['dhuhr']),
-                  _buildPrayerTimeRow('asr', 'العصر', _prayerTimesData!['asr']),
-                  _buildPrayerTimeRow(
-                      'maghrib', 'المغرب', _prayerTimesData!['maghrib']),
-                  _buildPrayerTimeRow(
-                      'isha', 'العشاء', _prayerTimesData!['isha']),
-                ],
-              ),
-            if (_defaultLocation != null)
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: Text(
-                      'الإحداثيات: ${_defaultLocation!['latitude']}, ${_defaultLocation!['longitude']}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ),
-                  if (_qiblaDirection != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4.0),
-                      child: Row(
-                        children: [
-                          Text(
-                            'اتجاه القبلة:',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${_qiblaDirection!.toStringAsFixed(2)}°',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue,
-                            ),
-                          ),
-                          Icon(
-                            Icons.compass_calibration,
-                            size: 16,
-                            color: _qiblaDirection == 360
-                                ? Colors.orange
-                                : Colors.green,
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // بناء صف لوقت صلاة معين
-  Widget _buildPrayerTimeRow(String key, String name, String time) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            name,
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          Text(
-            time,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // بناء كرت الرسالة اليومية
-  Widget _buildDailyMessageCard() {
-    return Card(
-      elevation: 4,
-      color: Colors.blue.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'رسالة اليوم',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh, color: Colors.blue),
-                  onPressed: _loadLatestDailyMessage,
-                  tooltip: 'تحديث',
-                ),
-              ],
-            ),
-            const Divider(),
-            if (_isLoadingDailyMessage)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: CircularProgressIndicator(),
-                ),
-              )
-            else if (_latestDailyMessage == null)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text(
-                    'لم يتم العثور على رسائل يومية',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ),
-              )
-            else
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _latestDailyMessage!['title'],
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _latestDailyMessage!['content'],
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade100,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(
-                          _latestDailyMessage!['category'],
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.blue.shade800,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        'المصدر: ${_latestDailyMessage!['source']}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontStyle: FontStyle.italic,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-          ],
-        ),
-      ),
-    );
+      );
+    }
   }
 }
